@@ -37,7 +37,7 @@ FLAGS = flags.FLAGS
 flags.DEFINE_string(
     "checkpoint_weights_path", None, "Path to checkpoint", required=True
 )
-flags.DEFINE_integer("checkpoint_step", None, "Checkpoint step", required=True)
+flags.DEFINE_integer("checkpoint_step", None, "Checkpoint step")
 
 # custom to bridge_data_robot
 flags.DEFINE_string("ip", "localhost", "IP address of the robot")
@@ -67,10 +67,10 @@ blocking control and we evaluate with blocking control.
 We also use a step duration of 0.4s to reduce the jerkiness of the policy.
 Be sure to change the step duration back to 0.2 if evaluating with non-blocking control.
 """
-STEP_DURATION = 0.4
+STEP_DURATION = 0.2
 STICKY_GRIPPER_NUM_STEPS = 1
 WORKSPACE_BOUNDS = [[0.1, -0.15, -0.01, -1.57, 0], [0.45, 0.25, 0.25, 1.57, 0]]
-CAMERA_TOPICS = [{"name": "/blue/image_raw"}]
+CAMERA_TOPICS = [{"name": "/yellow/image_raw"}]
 ENV_PARAMS = {
     "camera_topics": CAMERA_TOPICS,
     "override_workspace_boundaries": WORKSPACE_BOUNDS,
@@ -100,16 +100,25 @@ def main(_):
     if not FLAGS.blocking:
         assert STEP_DURATION == 0.2, STEP_DURATION_MESSAGE
 
-    # load models
-    model = OctoModel.load_pretrained(
-        FLAGS.checkpoint_weights_path,
-        FLAGS.checkpoint_step,
-    )
-
+    if FLAGS.checkpoint_step:
+        # load models
+        model = OctoModel.load_pretrained(
+            FLAGS.checkpoint_weights_path,
+            FLAGS.checkpoint_step,
+        )
+    else:
+        model = OctoModel.load_pretrained(
+            FLAGS.checkpoint_weights_path
+        )
+    # import pdb; pdb.set_trace()
     # wrap the robot environment
     env = UnnormalizeActionProprio(
         env, model.dataset_statistics["bridge_dataset"], normalization_type="normal"
     )
+    # env = UnnormalizeActionProprio(
+    #     env, model.dataset_statistics, normalization_type="normal"
+    # )
+
     env = HistoryWrapper(env, FLAGS.horizon)
     env = TemporalEnsembleWrapper(env, FLAGS.pred_horizon)
     # switch TemporalEnsembleWrapper with RHCWrapper for receding horizon control
@@ -130,6 +139,7 @@ def main(_):
             tasks,
             rng=rng,
         )
+        # jax.debug.breakpoint()
         # remove batch dim
         return actions[0]
 

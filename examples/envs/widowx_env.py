@@ -4,6 +4,7 @@ import gym
 import numpy as np
 from pyquaternion import Quaternion
 from widowx_envs.widowx_env_service import WidowXClient
+import cv2
 
 
 def state_to_eep(xyz_coor, zangle: float):
@@ -23,6 +24,45 @@ def state_to_eep(xyz_coor, zangle: float):
     # yaw, pitch, roll = quat.yaw_pitch_roll
     return new_pose
 
+def load_frames_from_video(video_path):
+    """
+    Loads frames from a video file.
+
+    Args:
+        video_path (str): Path to the video file.
+
+    Returns:
+        List of frames extracted from the video.
+    """
+    cap = cv2.VideoCapture(video_path)
+    frames = []
+    
+    while cap.isOpened():
+        ret, frame = cap.read()
+        if not ret:
+            break
+        frames.append(frame)
+    
+    cap.release()
+    return frames
+
+def wait_for_obs_from_input(frame_list, index, im_size):
+    """
+    Fetches the next frame from the frame list.
+
+    Args:
+        frame_list (list): List of frames.
+        index (int): Current index in the frame list.
+
+    Returns:
+        obs: The next observation frame.
+        new_index: The updated index.
+    """
+    if index >= len(frame_list):
+        raise IndexError("Index out of range. No more frames available.")
+    
+    obs = frame_list[index]
+    return obs, index + 1
 
 def wait_for_obs(widowx_client):
     obs = widowx_client.get_observation()
@@ -32,13 +72,27 @@ def wait_for_obs(widowx_client):
         time.sleep(1)
     return obs
 
-
 def convert_obs(obs, im_size):
-    image_obs = (
-        obs["image"].reshape(3, im_size, im_size).transpose(1, 2, 0) * 255
-    ).astype(np.uint8)
+    print(obs)
+    print(f"Original shape of obs['image']: {obs['image'].shape}")
+    obs['image'] = (obs["image"].reshape(3, 256, 256).transpose(1, 2, 0) * 255).astype(np.uint8)
+    # print(obs["image"].shape)
+
+    obs['image'] = cv2.resize(np.array(obs['image']), (256, 256))
+    image_obs = obs["image"]
+
+    # print(obs["image"].shape)
+
+    # image_obs = (
+    #     obs["image"].reshape(3, im_size, im_size).transpose(1, 2, 0) * 255
+    # ).astype(np.uint8)
     # add padding to proprio to match training
-    proprio = np.concatenate([obs["state"][:6], [0], obs["state"][-1:]])
+
+    # TODO: sumedh look at this man
+    # proprio = np.concatenate([obs["state"][:6], [0], obs["state"][-1:]])
+
+    proprio = np.concatenate([obs["state"][:6],[0], obs["state"][-1:]])
+
     # NOTE: assume image_1 is not available
     return {
         "image_primary": image_obs,
@@ -80,6 +134,9 @@ class WidowXGym(gym.Env):
                 "proprio": gym.spaces.Box(
                     low=np.ones((8,)) * -1, high=np.ones((8,)), dtype=np.float64
                 ),
+                # "proprio": gym.spaces.Box(
+                #     low=np.ones((8,)) * -1, high=np.ones((8,)), dtype=np.float64
+                # ),
             }
         )
         self.action_space = gym.spaces.Box(
@@ -100,6 +157,7 @@ class WidowXGym(gym.Env):
             self.is_gripper_closed = not self.is_gripper_closed
             self.num_consecutive_gripper_change_actions = 0
         action[-1] = 0.0 if self.is_gripper_closed else 1.0
+        print(action)
 
         self.widowx_client.step_action(action, blocking=self.blocking)
 

@@ -160,7 +160,8 @@ class OctoTransformer(nn.Module):
             if tokenizer_output is None:
                 logging.warning(f"Skipping task tokenizer: {group_name}")
                 continue
-
+                
+            # jax.debug.breakpoint()
             task_tokens = nn.Dense(
                 self.token_embedding_size, name=f"{group_name}_projection"
             )(tokenizer_output.tokens)

@@ -9,6 +9,8 @@ import numpy as np
 import tensorflow as tf
 
 
+from octo.data.utils.data_utils import binarize_gripper_actions
+
 def stack_and_pad(history: list, num_obs: int):
     """
     Converts a list of observation dictionaries (`history`) into a single observation dictionary
@@ -207,6 +209,15 @@ class TemporalEnsembleWrapper(gym.Wrapper):
         weights = weights / weights.sum()
         # compute the weighted average across all predictions for this timestep
         action = np.sum(weights[:, None] * curr_act_preds, axis=0)
+        # print(action)
+        # import pdb; pdb.set_trace()
+        #TODO: fix this?
+        # action[-1] = binarize_gripper_actions(action[-1])
+        # if action[-1] > 0.95:
+        #     action[-1] = 1 
+        
+        # if action[-1] < 0.05:
+        #     action[-1] = 0
 
         return self.env.step(action)
 
@@ -257,17 +268,30 @@ class UnnormalizeActionProprio(gym.ActionWrapper, gym.ObservationWrapper):
     Un-normalizes the action and proprio.
     """
 
+    """
+
+    def __init__(
+        self,/home/liralab-widowx/octo/octo/utils/gym_wrappers.py
+            lambda x: np.array(x),
+            action_proprio_metadata,
+            is_leaf=lambda x: isinstance(x, list),
+        )
+        self.normalization_type = normalization_type
+        super().__init__(env)
+    """
     def __init__(
         self,
         env: gym.Env,
         action_proprio_metadata: dict,
         normalization_type: str,
     ):
+
         self.action_proprio_metadata = jax.tree_map(
             lambda x: np.array(x),
             action_proprio_metadata,
             is_leaf=lambda x: isinstance(x, list),
         )
+
         self.normalization_type = normalization_type
         super().__init__(env)
 
