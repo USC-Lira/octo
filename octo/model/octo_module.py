@@ -186,12 +186,12 @@ class OctoTransformer(nn.Module):
         #
         # Next, add the observation tokens
         #
-
         for name, tok in self.observation_tokenizers.items():
             group_name = f"obs_{name}"
             # Receive inputs from tokenizer and cast to embedding size
             tokenizer_output: TokenGroup = tok(observations, tasks, train=train)
             if tokenizer_output is None:
+                breakpoint()
                 logging.warning(f"Skipping observation tokenizer: {group_name}")
                 continue
 

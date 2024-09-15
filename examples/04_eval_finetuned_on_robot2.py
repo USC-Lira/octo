@@ -14,7 +14,7 @@ import time
 from absl import app, flags, logging
 import click
 import cv2
-from envs.widowx_env import convert_obs, state_to_eep, wait_for_obs, WidowXGym
+from envs.widowx_env import convert_obs, state_to_eep, wait_for_obs_from_input, load_frames_from_video, WidowXGym
 import imageio
 import jax
 import jax.numpy as jnp
@@ -22,8 +22,11 @@ import numpy as np
 from widowx_envs.widowx_env_service import WidowXClient, WidowXConfigs, WidowXStatus
 
 from octo.model.octo_model import OctoModel
-from octo.utils.gym_wrappers import HistoryWrapper, TemporalEnsembleWrapper
-from octo.utils.train_callbacks import supply_rng
+from octo.utils.gym_wrappers import (
+    HistoryWrapper,
+    TemporalEnsembleWrapper,
+    UnnormalizeActionProprio,
+)
 
 np.set_printoptions(suppress=True)
 
@@ -34,7 +37,7 @@ FLAGS = flags.FLAGS
 flags.DEFINE_string(
     "checkpoint_weights_path", None, "Path to checkpoint", required=True
 )
-flags.DEFINE_integer("checkpoint_step", None, "Checkpoint step", required=True)
+flags.DEFINE_integer("checkpoint_step", None, "Checkpoint step")
 
 # custom to bridge_data_robot
 flags.DEFINE_string("ip", "localhost", "IP address of the robot")
@@ -47,15 +50,10 @@ flags.DEFINE_bool("blocking", False, "Use the blocking controller")
 flags.DEFINE_integer("im_size", None, "Image size", required=True)
 flags.DEFINE_string("video_save_path", None, "Path to save video")
 flags.DEFINE_integer("num_timesteps", 120, "num timesteps")
-flags.DEFINE_integer("window_size", 2, "Observation history length")
-flags.DEFINE_integer(
-    "action_horizon", 4, "Length of action sequence to execute/ensemble"
-)
+flags.DEFINE_integer("horizon", 1, "Observation history length")
+flags.DEFINE_integer("pred_horizon", 1, "Length of action sequence from model")
+flags.DEFINE_integer("exec_horizon", 1, "Length of action sequence to execute")
 
-# Define the 'deterministic' flag
-# flags.DEFINE_boolean('deterministic', default=False, help='Use deterministic mode')
-
-# flags.DEFINE_boolean('temperature', default=False, help='Use temperature mode')
 
 # show image flag
 flags.DEFINE_bool("show_image", False, "Show image")
@@ -66,12 +64,13 @@ STEP_DURATION_MESSAGE = """
 Bridge data was collected with non-blocking control and a step duration of 0.2s.
 However, we relabel the actions to make it look like the data was collected with
 blocking control and we evaluate with blocking control.
-Be sure to use a step duration of 0.2 if evaluating with non-blocking control.
+We also use a step duration of 0.4s to reduce the jerkiness of the policy.
+Be sure to change the step duration back to 0.2 if evaluating with non-blocking control.
 """
 STEP_DURATION = 0.2
 STICKY_GRIPPER_NUM_STEPS = 1
 WORKSPACE_BOUNDS = [[0.1, -0.15, -0.01, -1.57, 0], [0.45, 0.25, 0.25, 1.57, 0]]
-CAMERA_TOPICS = [{"name": "/blue/image_raw"}]
+CAMERA_TOPICS = [{"name": "/yellow/image_raw"}]
 ENV_PARAMS = {
     "camera_topics": CAMERA_TOPICS,
     "override_workspace_boundaries": WORKSPACE_BOUNDS,
@@ -101,19 +100,32 @@ def main(_):
     if not FLAGS.blocking:
         assert STEP_DURATION == 0.2, STEP_DURATION_MESSAGE
 
-    # load models
-    model = OctoModel.load_pretrained(
-        FLAGS.checkpoint_weights_path,
-        FLAGS.checkpoint_step,
-    )
-
+    if FLAGS.checkpoint_step:
+        # load models
+        model = OctoModel.load_pretrained(
+            FLAGS.checkpoint_weights_path,
+            FLAGS.checkpoint_step,
+        )
+    else:
+        model = OctoModel.load_pretrained(
+            FLAGS.checkpoint_weights_path
+        )
+    # import pdb; pdb.set_trace()
     # wrap the robot environment
-    env = HistoryWrapper(env, FLAGS.window_size)
-    env = TemporalEnsembleWrapper(env, FLAGS.action_horizon)
-    # switch TemporalEnsembleWrapper with RHCWrapper for receding horizon control
-    # env = RHCWrapper(env, FLAGS.action_horizon)
+    env = UnnormalizeActionProprio(
+        env, model.dataset_statistics["bridge_dataset"], normalization_type="normal"
+    )
+    # env = UnnormalizeActionProprio(
+    #     env, model.dataset_statistics, normalization_type="normal"
+    # )
 
-    # create policy functions
+    env = HistoryWrapper(env, FLAGS.horizon)
+    env = TemporalEnsembleWrapper(env, FLAGS.pred_horizon)
+    # switch TemporalEnsembleWrapper with RHCWrapper for receding horizon control
+    # env = RHCWrapper(env, FLAGS.exec_horizon)
+
+    # create policy function
+    @jax.jit
     def sample_actions(
         pretrained_model: OctoModel,
         observations,
@@ -126,24 +138,34 @@ def main(_):
             observations,
             tasks,
             rng=rng,
-            unnormalization_statistics=pretrained_model.dataset_statistics[
-                "bridge_dataset"
-            ]["action"],
         )
+        # jax.debug.breakpoint()
         # remove batch dim
         return actions[0]
+
+    def supply_rng(f, rng=jax.random.PRNGKey(0)):
+        def wrapped(*args, **kwargs):
+            nonlocal rng
+            rng, key = jax.random.split(rng)
+            return f(*args, rng=key, **kwargs)
+
+        return wrapped
 
     policy_fn = supply_rng(
         partial(
             sample_actions,
             model,
-            # argmax=FLAGS.deterministic,
-            # temperature=FLAGS.temperature,
         )
     )
 
     goal_image = jnp.zeros((FLAGS.im_size, FLAGS.im_size, 3), dtype=np.uint8)
     goal_instruction = ""
+
+    # Load frames from video
+    video_path = "/home/liralab-widowx/octo/examples/icra_toykitchen_fixed_cam_resetfree_push_sweep_toykitchen6_00.mp4"
+    frame_list = load_frames_from_video(video_path)
+    frame_index = 0
+    print(frame_list[0].shape)
 
     # goal sampling loop
     while True:
@@ -163,8 +185,7 @@ def main(_):
                     move_status = widowx_client.move(goal_eep, duration=1.5)
 
                 input("Press [Enter] when ready for taking the goal image. ")
-                obs = wait_for_obs(widowx_client)
-                obs = convert_obs(obs, FLAGS.im_size)
+                obs, frame_index = wait_for_obs_from_input(frame_list, frame_index, im_size=FLAGS.im_size)
                 goal = jax.tree_map(lambda x: x[None], obs)
 
             # Format task for the model
@@ -216,7 +237,10 @@ def main(_):
 
                 # perform environment step
                 start_time = time.time()
-                obs, _, _, truncated, _ = env.step(action)
+                obs, frame_index = wait_for_obs_from_input(frame_list, frame_index, FLAGS.im_size)  # Fetch observation from input source
+                print("obs: ", obs)
+                obs = convert_obs(obs, FLAGS.im_size)
+                _, _, _, truncated, _ = env.step(action)
                 print("step time: ", time.time() - start_time)
 
                 t += 1

@@ -40,7 +40,9 @@ flags.DEFINE_integer("checkpoint_step", None, "Checkpoint step", required=True)
 flags.DEFINE_string("ip", "localhost", "IP address of the robot")
 flags.DEFINE_integer("port", 5556, "Port of the robot")
 flags.DEFINE_spaceseplist("goal_eep", [0.3, 0.0, 0.15], "Goal position")
-flags.DEFINE_spaceseplist("initial_eep", [0.3, 0.0, 0.15], "Initial position")
+#flags.DEFINE_spaceseplist("initial_eep", [0.0, 0.0, 0.15], "Initial position")
+
+flags.DEFINE_spaceseplist("initial_eep", [0.11729337, -0.0177142, 0.23957245], "Initial position")
 flags.DEFINE_bool("blocking", False, "Use the blocking controller")
 
 
@@ -55,7 +57,7 @@ flags.DEFINE_integer(
 # Define the 'deterministic' flag
 # flags.DEFINE_boolean('deterministic', default=False, help='Use deterministic mode')
 
-# flags.DEFINE_boolean('temperature', default=False, help='Use temperature mode')
+flags.DEFINE_float('temperature', default=0.01, help='Use temperature mode')
 
 # show image flag
 flags.DEFINE_bool("show_image", False, "Show image")
@@ -129,6 +131,7 @@ def main(_):
             unnormalization_statistics=pretrained_model.dataset_statistics[
                 "bridge_dataset"
             ]["action"],
+            temperature=FLAGS.temperature,
         )
         # remove batch dim
         return actions[0]
@@ -147,43 +150,14 @@ def main(_):
 
     # goal sampling loop
     while True:
-        modality = click.prompt(
-            "Language or goal image?", type=click.Choice(["l", "g"])
-        )
-
-        if modality == "g":
-            if click.confirm("Take a new goal?", default=True):
-                assert isinstance(FLAGS.goal_eep, list)
-                _eep = [float(e) for e in FLAGS.goal_eep]
-                goal_eep = state_to_eep(_eep, 0)
-                widowx_client.move_gripper(1.0)  # open gripper
-
-                move_status = None
-                while move_status != WidowXStatus.SUCCESS:
-                    move_status = widowx_client.move(goal_eep, duration=1.5)
-
-                input("Press [Enter] when ready for taking the goal image. ")
-                obs = wait_for_obs(widowx_client)
-                obs = convert_obs(obs, FLAGS.im_size)
-                goal = jax.tree_map(lambda x: x[None], obs)
-
-            # Format task for the model
-            task = model.create_tasks(goals=goal)
-            # For logging purposes
-            goal_image = goal["image_primary"][0]
-            goal_instruction = ""
-
-        elif modality == "l":
-            print("Current instruction: ", goal_instruction)
-            if click.confirm("Take a new instruction?", default=True):
-                text = input("Instruction?")
-            # Format task for the model
-            task = model.create_tasks(texts=[text])
-            # For logging purposes
-            goal_instruction = text
-            goal_image = jnp.zeros_like(goal_image)
-        else:
-            raise NotImplementedError()
+        print("Current instruction: ", goal_instruction)
+        if click.confirm("Take a new instruction?", default=True):
+            text = input("Instruction?")
+        # Format task for the model
+        task = model.create_tasks(texts=[text])
+        # For logging purposes
+        goal_instruction = text
+        goal_image = jnp.zeros_like(goal_image)
 
         input("Press [Enter] to start.")
 
