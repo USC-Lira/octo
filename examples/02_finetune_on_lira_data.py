@@ -13,6 +13,13 @@ import optax
 import tensorflow as tf
 import tqdm
 import wandb
+from functools import partial
+from octo.utils.train_callbacks import (
+    RolloutVisualizationCallback,
+    SaveCallback,
+    ValidationCallback,
+    VisualizationCallback,
+)
 
 from octo.data.dataset import make_single_dataset
 from octo.model.components.action_heads import L1ActionHead
@@ -38,6 +45,8 @@ flags.DEFINE_string(
 flags.DEFINE_string("data_dir", None, "Path to finetuning dataset, in RLDS format.")
 flags.DEFINE_string("save_dir", None, "Directory for saving finetuning checkpoints.")
 flags.DEFINE_integer("batch_size", 16, "Batch size for finetuning.")
+flags.DEFINE_integer("train_steps", 50000, "Training steps")
+flags.DEFINE_integer("num_eval_batches", 16, "Num batches to perform each eval step")
 flags.DEFINE_bool("train_proprio", False, "Whether to train proprio")
 flags.DEFINE_string("wandb_project_name", WANDB_PROJECT_NAME, "Wandb project name")
 flags.DEFINE_string("wandb_entity_name", WANDB_ENTITY_NAME, "Wandb entity name")
@@ -78,15 +87,18 @@ def main(_):
     )
     if FLAGS.train_proprio:
         dataset_kwargs["proprio_obs_key"]="state"
+    traj_transform_kwargs = dict(
+        window_size=2,
+        action_horizon=4,
+    )
+    frame_transform_kwargs = dict(
+        resize_size={"primary": (256, 256)},
+    )
+
     dataset = make_single_dataset(
         dataset_kwargs=dataset_kwargs,
-        traj_transform_kwargs=dict(
-            window_size=2,
-            action_horizon=4,
-        ),
-        frame_transform_kwargs=dict(
-            resize_size={"primary": (256, 256)},
-        ),
+        traj_transform_kwargs=traj_transform_kwargs,
+        frame_transform_kwargs=frame_transform_kwargs,
         train=True,
     )
     train_data_iter = (
@@ -96,7 +108,6 @@ def main(_):
         .batch(FLAGS.batch_size)
         .iterator()
     )
-
     # run text tokenizer over batch (this needs to happen before training / sharding) + delete unused keys
     text_processor = pretrained_model.text_processor
 
@@ -107,6 +118,17 @@ def main(_):
 
     train_data_iter = map(process_batch, train_data_iter)
     example_batch = next(train_data_iter)
+
+    eval_dataset = make_single_dataset(
+        dataset_kwargs=dataset_kwargs,
+        traj_transform_kwargs=traj_transform_kwargs,
+        frame_transform_kwargs=frame_transform_kwargs,
+        train=False,
+    )
+    eval_data_iter = (
+        eval_dataset.repeat().unbatch().shuffle(1000).batch(FLAGS.batch_size).iterator()
+    )
+    eval_data_iter = map(process_batch, eval_data_iter)
 
     # load pre-training config and modify --> remove wrist cam, add proprio input, change action head
     config = pretrained_model.config
@@ -179,30 +201,77 @@ def main(_):
         )
         return action_loss, action_metrics
 
-    @jax.jit
-    def train_step(state, batch):
+    # val_callback = ValidationCallback(
+    #    loss_fn=loss_fn,
+    #    process_batch_fn=process_batch,
+    #    text_processor=text_processor,
+    #    val_dataset_kwargs_list=[dataset_kwargs],
+    #    dataset_kwargs={
+    #        **dataset_kwargs,
+    #        "frame_transform_kwargs": frame_transform_kwargs,
+    #        "traj_transform_kwargs": traj_transform_kwargs,
+    #        "batch_size": FLAGS.batch_size,
+    #    },
+    #    modes_to_evaluate=["text_conditioned"],
+    #    **dict(
+    #        val_shuffle_buffer_size=1000,
+    #        num_val_batches=16,
+    #    ),
+    # )
+    # Replicate the initial model state across devices
+    train_state = jax.device_put_replicated(train_state, jax.devices())
+
+    @partial(jax.pmap, axis_name="batch")
+    def train_step(state, batch, train=True):
         rng, dropout_rng = jax.random.split(state.rng)
         (loss, info), grads = jax.value_and_grad(loss_fn, has_aux=True)(
-            state.model.params, batch, dropout_rng, train=True
+            state.model.params, batch, dropout_rng, train=train
         )
-        new_state = state.apply_gradients(grads=grads, rng=rng)
+        if train:
+            new_state = state.apply_gradients(grads=grads, rng=rng)
+        else:
+            new_state = state
         return new_state, info
 
-    # run finetuning loop
+    # Split the batch data across devices
+    def shard_batch(batch):
+        return jax.tree_map(
+            lambda x: x.reshape((jax.local_device_count(), -1) + x.shape[1:]), batch
+        )
+
+    # Run finetuning loop
     logging.info("Starting finetuning...")
-    for i in tqdm.tqdm(range(50000), total=50000, dynamic_ncols=True):
+    for i in tqdm.tqdm(
+        range(FLAGS.train_steps), total=FLAGS.train_steps, dynamic_ncols=True
+    ):
         batch = next(train_data_iter)
+        batch = shard_batch(batch)
         train_state, update_info = train_step(train_state, batch)
-        if (i + 1) % 100 == 0:
-            update_info = jax.device_get(update_info)
-            wandb.log(
-                flax.traverse_util.flatten_dict({"training": update_info}, sep="/"),
-                step=i,
-            )
         if (i + 1) % 10000 == 0:
+            ## Eval model
+            # logging.info("Evaluating model...")
+
+            # for i in range(FLAGS.num_eval_batches):
+            #    eval_batch = next(eval_data_iter)
+            #    eval_batch = shard_batch(eval_batch)
+            #    _, eval_info = train_step(train_state, eval_batch, train=False)
+            #    eval_info = jax.device_get(eval_info)
+            #    eval_metrics = (
+            #        flax.traverse_util.flatten_dict({"validation": eval_info}, sep="/"),
+            #    )
+
             # save checkpoint
             train_state.model.save_pretrained(step=i, checkpoint_path=FLAGS.save_dir)
 
+        if (i + 1) % 100 == 0:
+            update_info = jax.device_get(update_info)
+            train_metrics = (
+                flax.traverse_util.flatten_dict({"training": update_info}, sep="/"),
+            )
+            wandb.log(
+                train_metrics,
+                step=i,
+            )
 
 if __name__ == "__main__":
     app.run(main)
