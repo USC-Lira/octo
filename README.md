@@ -1,3 +1,14 @@
+# LIRA Modified Installation:
+Download [https://github.com/USC-Lira/bridge_data_robot](https://github.com/USC-Lira/bridge_data_robot), [https://github.com/USC-Lira/dlimp](https://github.com/USC-Lira/dlimp), [https://github.com/USC-Lira/bridge_data_v2](https://github.com/USC-Lira/bridge_data_v2) first.
+```
+conda env create -f octo_fixed_env.yml
+pip install -e .
+pip install --upgrade "jax[cuda11_pip]==0.4.20" -f https://storage.googleapis.com/jax-releases/jax_cuda_releases.html
+pip install -e BRIDGE_DATA_ROBOT_PATH/widowx_envs
+pip install -e DLIMP_PATH
+```
+
+
 # Octo
 [![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://githubtocolab.com/octo-models/octo/blob/main/examples/01_inference_pretrained.ipynb)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
