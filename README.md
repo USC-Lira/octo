@@ -2,6 +2,7 @@
 Download [https://github.com/USC-Lira/bridge_data_robot](https://github.com/USC-Lira/bridge_data_robot), [https://github.com/USC-Lira/dlimp](https://github.com/USC-Lira/dlimp), [https://github.com/USC-Lira/bridge_data_v2](https://github.com/USC-Lira/bridge_data_v2) first.
 ```
 conda env create -f octo_fixed_env.yml
+conda activate octo2
 pip install -e .
 pip install --upgrade "jax[cuda11_pip]==0.4.20" -f https://storage.googleapis.com/jax-releases/jax_cuda_releases.html # swap cuda11 to cuda12 if using a cuda12 machine
 pip install -e BRIDGE_DATA_ROBOT_PATH/widowx_envs
