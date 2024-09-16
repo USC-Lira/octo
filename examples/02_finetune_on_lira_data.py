@@ -33,7 +33,7 @@ from octo.utils.train_utils import (
     process_text,
     TrainState,
 )
-
+MULTI_GPU = False
 FLAGS = flags.FLAGS
 
 WANDB_PROJECT_NAME="jesse_finetune_octo"
@@ -223,7 +223,8 @@ def main(_):
     #    ),
     # )
     # Replicate the initial model state across devices
-    train_state = jax.device_put_replicated(train_state, jax.devices())
+    if MULTI_GPU:
+        train_state = jax.device_put_replicated(train_state, jax.devices())
 
     def inner_train_step(state, batch, train=True):
         rng, dropout_rng = jax.random.split(state.rng)
@@ -238,7 +239,7 @@ def main(_):
         return inner_train_step(state, batch, train=train)
 
     @jax.jit
-    def single_device_eval_step(state, batch, train=False):
+    def single_device_train_step(state, batch, train=True):
         return inner_train_step(state, batch, train=train)
 
     # Split the batch data across devices
@@ -247,30 +248,37 @@ def main(_):
             lambda x: x.reshape((jax.local_device_count(), -1) + x.shape[1:]), batch
         )
 
+    if MULTI_GPU:
+        train_fn = train_step
+    else:
+        train_fn = single_device_train_step
+
     # Run finetuning loop
     logging.info("Starting finetuning...")
     for i in tqdm.tqdm(
         range(FLAGS.train_steps), total=FLAGS.train_steps, dynamic_ncols=True
     ):
         batch = next(train_data_iter)
-        batch = shard_batch(batch)
-        train_state, update_info = train_step(train_state, batch)
+        if MULTI_GPU:
+            batch = shard_batch(batch)
+        train_state, update_info = train_fn(train_state, batch)
         eval_metrics = {}
-        if (i + 1) % 10000 == 0:
+        if (i) % 10000 == 0:
             ## Eval model
-            # logging.info("Evaluating model...")
+            logging.info("Evaluating model...")
             # Gather the replicated state from multiple devices
-            # single_device_state = jax.tree_map(lambda x: x[0], train_state)
+            if MULTI_GPU:
+                single_device_state = jax.tree_map(lambda x: x[0], train_state)
 
-            # for i in range(FLAGS.num_eval_batches):
-            #    eval_batch = next(eval_data_iter)
-            #    _, eval_info = single_device_eval_step(
-            #        single_device_state, eval_batch, train=False
-            #    )
-            #    eval_info = jax.device_get(eval_info)
-            #    eval_metrics = (
-            #        flax.traverse_util.flatten_dict({"validation": eval_info}, sep="/"),
-            #    )
+            for i in range(FLAGS.num_eval_batches):
+                eval_batch = next(eval_data_iter)
+                _, eval_info = single_device_train_step(
+                    train_state, eval_batch, train=False
+                )
+                eval_info = jax.device_get(eval_info)
+                eval_metrics = (
+                    flax.traverse_util.flatten_dict({"validation": eval_info}, sep="/"),
+                )
 
             # save checkpoint
             train_state.model.save_pretrained(step=i, checkpoint_path=FLAGS.save_dir)

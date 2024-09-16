@@ -112,10 +112,11 @@ def main(_):
         name=name,
         time=datetime.datetime.now().strftime("%Y%m%d_%H%M%S"),
     )
+    wandb_name = wandb_id + f"_{FLAGS.config.wandb.name}"
     wandb.init(
         config=FLAGS.config.to_dict(),
         id=wandb_id,
-        name=name,
+        name=wandb_name,
         mode="disabled" if FLAGS.debug else None,
         **FLAGS.config.wandb,
     )
