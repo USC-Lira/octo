@@ -73,7 +73,7 @@ def main(_):
     dataset_kwargs=dict(
         name="bridge_42_trajs",
         data_dir=FLAGS.data_dir,
-        image_obs_keys={"primary": "image_0"},
+        image_obs_keys={"primary": "image_1"},
         language_key="language_instruction",
     )
     if FLAGS.train_proprio:
