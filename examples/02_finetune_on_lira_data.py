@@ -199,7 +199,7 @@ def main(_):
                 flax.traverse_util.flatten_dict({"training": update_info}, sep="/"),
                 step=i,
             )
-        if (i + 1) % 1000 == 0:
+        if (i + 1) % 10000 == 0:
             # save checkpoint
             train_state.model.save_pretrained(step=i, checkpoint_path=FLAGS.save_dir)
 
