@@ -126,7 +126,11 @@ def main(_):
         train=False,
     )
     eval_data_iter = (
-        eval_dataset.repeat().unbatch().shuffle(1000).batch(FLAGS.batch_size).iterator()
+        eval_dataset.repeat()
+        .unbatch()
+        .shuffle(1000)
+        .batch(FLAGS.batch_size // jax.device_count())
+        .iterator()
     )
     eval_data_iter = map(process_batch, eval_data_iter)
 
@@ -221,17 +225,21 @@ def main(_):
     # Replicate the initial model state across devices
     train_state = jax.device_put_replicated(train_state, jax.devices())
 
-    @partial(jax.pmap, axis_name="batch")
-    def train_step(state, batch, train=True):
+    def inner_train_step(state, batch, train=True):
         rng, dropout_rng = jax.random.split(state.rng)
         (loss, info), grads = jax.value_and_grad(loss_fn, has_aux=True)(
             state.model.params, batch, dropout_rng, train=train
         )
-        if train:
-            new_state = state.apply_gradients(grads=grads, rng=rng)
-        else:
-            new_state = state
+        new_state = state.apply_gradients(grads=grads, rng=rng)
         return new_state, info
+
+    @partial(jax.pmap, axis_name="batch")
+    def train_step(state, batch, train=True):
+        return inner_train_step(state, batch, train=train)
+
+    @jax.jit
+    def single_device_eval_step(state, batch, train=False):
+        return inner_train_step(state, batch, train=train)
 
     # Split the batch data across devices
     def shard_batch(batch):
@@ -247,14 +255,18 @@ def main(_):
         batch = next(train_data_iter)
         batch = shard_batch(batch)
         train_state, update_info = train_step(train_state, batch)
+        eval_metrics = {}
         if (i + 1) % 10000 == 0:
             ## Eval model
             # logging.info("Evaluating model...")
+            # Gather the replicated state from multiple devices
+            # single_device_state = jax.tree_map(lambda x: x[0], train_state)
 
             # for i in range(FLAGS.num_eval_batches):
             #    eval_batch = next(eval_data_iter)
-            #    eval_batch = shard_batch(eval_batch)
-            #    _, eval_info = train_step(train_state, eval_batch, train=False)
+            #    _, eval_info = single_device_eval_step(
+            #        single_device_state, eval_batch, train=False
+            #    )
             #    eval_info = jax.device_get(eval_info)
             #    eval_metrics = (
             #        flax.traverse_util.flatten_dict({"validation": eval_info}, sep="/"),
@@ -265,11 +277,11 @@ def main(_):
 
         if (i + 1) % 100 == 0:
             update_info = jax.device_get(update_info)
-            train_metrics = (
-                flax.traverse_util.flatten_dict({"training": update_info}, sep="/"),
+            train_metrics = flax.traverse_util.flatten_dict(
+                {"training": update_info}, sep="/"
             )
             wandb.log(
-                train_metrics,
+                {**train_metrics, **eval_metrics},
                 step=i,
             )
 
