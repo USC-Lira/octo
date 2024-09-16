@@ -40,11 +40,11 @@ dependencies:
       - decorator==4.4.2
       - distlib==0.3.8
       - distrax==0.1.5
-      - dlimp==0.0.1
-      - dlimp-dataset-builder==0.0.0
+        #- dlimp==0.0.1
+        #- dlimp-dataset-builder==0.0.0
       - dm-tree==0.1.8
       - docker-pycreds==0.4.0
-      - edgeml==0.1.2
+        #- edgeml==0.1.2
       - einops==0.8.0
       - etils==1.9.4
       - filelock==3.16.0
@@ -70,7 +70,6 @@ dependencies:
       - imageio-ffmpeg==0.5.1
       - importlib-resources==6.4.5
       - jax==0.4.20
-      - jaxlib==0.4.20+cuda11.cudnn86
       - keras==2.15.0
       - kiwisolver==1.4.7
       - libclang==18.1.1
@@ -98,7 +97,7 @@ dependencies:
       - nvidia-cusparse-cu11==11.7.5.86
       - nvidia-nccl-cu11==2.21.5
       - oauthlib==3.2.2
-      - octo==0.0.0
+        #- octo==0.0.0
       - opencv-contrib-python==4.10.0.84
       - opencv-python==4.10.0.84
       - openexr==3.2.4
