@@ -16,7 +16,7 @@ def get_config(config_string="full,language_conditioned"):
     # and second image key should be the wrist view (None if not used)
 
     FINETUNING_KWARGS = {
-        "name": "bridge_42_trajs",
+        "name": "bridge_88_trajs",
         "data_dir": "/home/jesse/jesse_datasets/",
         "image_obs_keys": {"primary": "image_1", "wrist": None},
         # "proprio_obs_key": "state",
@@ -47,7 +47,7 @@ def get_config(config_string="full,language_conditioned"):
     else:
         raise ValueError("Invalid mode")
 
-    NAME_PREFIX = "bridge_42_trajs_octo_base-1.5_bs128_im1_full"
+    NAME_PREFIX = "bridge_88_trajs_octo_base-1.5_bs128_im1_full"
 
     max_steps = FieldReference(50000)
     window_size = FieldReference(default=1)
