@@ -159,9 +159,9 @@ def get_config(config_string="full,language_conditioned"):
         ),
     )
     # If the default data loading speed is too slow, try these:
-    config["frame_transform_threads"] = (
-        16  # for the most CPU-intensive ops (decoding, resizing, augmenting)
-    )
+    # config["frame_transform_threads"] = (
+    #    16  # for the most CPU-intensive ops (decoding, resizing, augmenting)
+    # )
 
     config["traj_transform_kwargs"] = traj_transform_kwargs
     config["frame_transform_kwargs"] = frame_transform_kwargs
