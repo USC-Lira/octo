@@ -16,7 +16,7 @@ def get_config(config_string="head_mlp_only,language_conditioned"):
     # and second image key should be the wrist view (None if not used)
 
     FINETUNING_KWARGS = {
-        "name": "bridge_dataset",
+        "name": "bridge_160_trajs",
         "data_dir": "/home/jesse/jesse_rlds_data//",
         "image_obs_keys": {"primary": "image_0", "wrist": None},
         # "proprio_obs_key": "state",
